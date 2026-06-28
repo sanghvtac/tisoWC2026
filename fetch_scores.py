@@ -73,25 +73,46 @@ def main():
     except Exception as e:
         print(f"✗ Không tải được openfootball: {e}"); sys.exit(0)  # thoát êm, lần sau thử lại
     idx = {}
+    knum = {}   # trận knockout: num -> ft (openfootball đánh số num trùng số trận app: 73-104)
     for m in data.get("matches", []):
         ft = (m.get("score") or {}).get("ft")
-        if ft: idx[f'{m.get("team1")}|{m.get("team2")}'] = ft
-    print(f"  nguồn có {len(idx)} trận đã có kết quả.")
+        if not ft: continue
+        idx[f'{m.get("team1")}|{m.get("team2")}'] = ft
+        n = m.get("num")
+        if n is not None:
+            try: knum[int(n)] = ft
+            except (TypeError, ValueError): pass
+    print(f"  nguồn có {len(idx)} trận đã có kết quả ({len(knum)} trận có num/KO).")
 
     # 2) đọc các tỉ số đã có trên Firebase (để KHÔNG đè trận đã nhập tay)
     existing = fb_get("game/sc") or {}
+    def done(num):
+        return str(num) in existing or num in existing
 
-    # 3) với mỗi trận vòng bảng chưa có tỉ số -> nếu nguồn có thì ghi
+    # 3a) VÒNG BẢNG: map theo cặp tên đội
     filled = 0
     for num, home, away in GM:
-        if str(num) in existing or num in existing:
-            continue  # đã có tỉ số (admin nhập tay hoặc lần chạy trước) -> bỏ qua
+        if done(num): continue
         ft = idx.get(f"{api_name(home)}|{api_name(away)}")
-        if not ft:
-            continue  # nguồn chưa có KQ trận này
+        if not ft: continue
         try:
             fb_put(f"game/sc/{num}", [int(ft[0]), int(ft[1])])
-            print(f"  ✓ Trận {num}: {home} {ft[0]}-{ft[1]} {away}")
+            print(f"  ✓ Trận {num} (bảng): {home} {ft[0]}-{ft[1]} {away}")
+            filled += 1
+        except Exception as e:
+            print(f"  ✗ Ghi trận {num} lỗi: {e}")
+
+    # 3b) KNOCKOUT (trận 73-104): map theo num — KHÔNG cần tên đội.
+    # Lưu ý: ft là tỉ số 90 phút. Nếu hòa phải đá luân lưu thì admin tự chọn
+    # đội thắng luân lưu trong app (robot chỉ ghi tỉ số 90 phút).
+    for num in range(73, 105):
+        if done(num): continue
+        ft = knum.get(num)
+        if not ft: continue
+        try:
+            fb_put(f"game/sc/{num}", [int(ft[0]), int(ft[1])])
+            note = " (hòa 90' — admin chọn đội thắng luân lưu trong app)" if int(ft[0])==int(ft[1]) else ""
+            print(f"  ✓ Trận {num} (KO): {ft[0]}-{ft[1]}{note}")
             filled += 1
         except Exception as e:
             print(f"  ✗ Ghi trận {num} lỗi: {e}")
